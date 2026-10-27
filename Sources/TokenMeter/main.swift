@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -19,7 +20,7 @@ struct TokenMeterApp: App {
     }
 }
 
-struct Usage: Equatable, Sendable {
+struct Usage: Codable, Equatable, Sendable {
     var input = 0
     var output = 0
     var cached = 0
@@ -39,6 +40,16 @@ struct Usage: Equatable, Sendable {
     }
 }
 
+struct ViewedUsage: Codable, Equatable {
+    var today: Usage
+    var allTime: Usage
+    var viewedAt: Date
+
+    func hasSameCounts(as other: ViewedUsage) -> Bool {
+        today == other.today && allTime == other.allTime
+    }
+}
+
 @Observable
 @MainActor
 final class TokenMeter {
@@ -50,6 +61,23 @@ final class TokenMeter {
     var isLoading = false
 
     var menuTitle: String { today.total == 0 ? "Tokens" : today.total.compact + " today" }
+
+    private static let viewedUsageKey = "lastViewedUsage.v1"
+    private static let preferences = UserDefaults(suiteName: "com.lightframe.TokenMeter") ?? .standard
+
+    var currentUsage: ViewedUsage {
+        ViewedUsage(today: today, allTime: allTime, viewedAt: Date())
+    }
+
+    func lastViewedUsage() -> ViewedUsage? {
+        guard let data = Self.preferences.data(forKey: Self.viewedUsageKey) else { return nil }
+        return try? JSONDecoder().decode(ViewedUsage.self, from: data)
+    }
+
+    func rememberViewedUsage(_ usage: ViewedUsage) {
+        guard let data = try? JSONEncoder().encode(usage) else { return }
+        Self.preferences.set(data, forKey: Self.viewedUsageKey)
+    }
 
     private let root = FileManager.default.homeDirectoryForCurrentUser
         .appending(path: ".codex/sessions", directoryHint: .isDirectory)
@@ -64,7 +92,12 @@ final class TokenMeter {
     }
 
     func refresh() async {
-        guard !isLoading else { return }
+        if isLoading {
+            while isLoading {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return
+        }
         isLoading = true
         let result = await Task.detached(priority: .utility) { [root] in
             Self.scan(root: root)
@@ -157,8 +190,126 @@ private extension Int {
 private struct MeterView: View {
     let meter: TokenMeter
     @Environment(\.colorScheme) private var colorScheme
+    @State private var displayed: ViewedUsage?
+    @State private var settled: ViewedUsage?
+    @State private var isOpen = false
+    @State private var acceptingUpdates = false
+    @State private var openingID = 0
 
     var body: some View {
+        Group {
+            if let displayed {
+                content(displayed)
+            } else {
+                ProgressView("기록 읽는 중")
+                    .font(AppFont.regular(12))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 248)
+            }
+        }
+        .onAppear {
+            if NSApplication.shared.keyWindow?.isVisible == true {
+                openPresentation()
+            }
+        }
+        .onDisappear {
+            closePresentation()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard (notification.object as? NSWindow)?.isVisible == true else { return }
+            openPresentation()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            closePresentation()
+        }
+        .onChange(of: meter.lastUpdated) { _, _ in
+            guard isOpen && acceptingUpdates else { return }
+            showCurrentUsage(for: openingID)
+        }
+    }
+
+    @MainActor
+    private func openPresentation() {
+        guard !isOpen else { return }
+        isOpen = true
+        acceptingUpdates = false
+        openingID += 1
+        if var previous = meter.lastViewedUsage() {
+            if !Calendar.current.isDateInToday(previous.viewedAt) {
+                previous.today = Usage()
+                previous.viewedAt = Date()
+            }
+            displayed = previous
+            settled = previous
+        }
+        let currentOpening = openingID
+        Task { await preparePresentation(for: currentOpening) }
+    }
+
+    @MainActor
+    private func closePresentation() {
+        guard isOpen else { return }
+        isOpen = false
+        acceptingUpdates = false
+        openingID += 1
+        if meter.error == nil, let settled {
+            meter.rememberViewedUsage(settled)
+        }
+        displayed = nil
+        settled = nil
+    }
+
+    @MainActor
+    private func preparePresentation(for opening: Int) async {
+        await meter.refresh()
+        guard isOpen && openingID == opening else { return }
+
+        let latest = meter.currentUsage
+        guard meter.error == nil else {
+            displayed = latest
+            acceptingUpdates = true
+            return
+        }
+
+        var previous = meter.lastViewedUsage() ?? latest
+        if !Calendar.current.isDate(previous.viewedAt, inSameDayAs: latest.viewedAt) {
+            previous.today = Usage()
+            previous.viewedAt = latest.viewedAt
+        }
+        displayed = previous
+        settled = previous
+
+        if previous.hasSameCounts(as: latest) {
+            acceptingUpdates = true
+            meter.rememberViewedUsage(previous)
+            return
+        }
+
+        // Let the previous value render before the wheels receive the new target.
+        try? await Task.sleep(for: .milliseconds(90))
+        guard isOpen && openingID == opening else { return }
+        acceptingUpdates = true
+        showCurrentUsage(for: opening)
+    }
+
+    @MainActor
+    private func showCurrentUsage(for opening: Int) {
+        guard meter.error == nil else { return }
+        let latest = meter.currentUsage
+        guard let displayed, !displayed.hasSameCounts(as: latest) else { return }
+        self.displayed = latest
+
+        Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            guard isOpen, openingID == opening,
+                  let displayed = self.displayed,
+                  displayed.hasSameCounts(as: latest) else { return }
+            settled = latest
+            meter.rememberViewedUsage(latest)
+        }
+    }
+
+    private func content(_ shown: ViewedUsage) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "circle.hexagongrid.fill")
@@ -185,7 +336,7 @@ private struct MeterView: View {
             Text("TODAY").font(AppFont.semibold(10))
                 .tracking(1.6).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 7) {
-                RollingCounter(value: meter.today.total, size: 38, font: AppFont.semibold(38))
+                RollingCounter(value: shown.today.total, size: 38, font: AppFont.semibold(38))
                     .tracking(-1.6)
                 Text("tokens").font(AppFont.regular(13)).foregroundStyle(.secondary)
             }
@@ -193,8 +344,8 @@ private struct MeterView: View {
             .padding(.bottom, 18)
 
             HStack(spacing: 8) {
-                metric("Input", value: meter.today.input, tint: .indigo)
-                metric("Output", value: meter.today.output, tint: .purple)
+                metric("Input", value: shown.today.input, tint: .indigo)
+                metric("Output", value: shown.today.output, tint: .purple)
             }
 
             Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 18)
@@ -203,7 +354,7 @@ private struct MeterView: View {
                 Text("전체 기록").foregroundStyle(.secondary)
                 Spacer()
                 HStack(spacing: 4) {
-                    RollingCounter(value: meter.allTime.total, size: 12, font: AppFont.medium(12))
+                    RollingCounter(value: shown.allTime.total, size: 12, font: AppFont.medium(12))
                     Text("tokens")
                 }
             }
@@ -212,7 +363,7 @@ private struct MeterView: View {
             HStack {
                 Text("오늘 캐시 입력").foregroundStyle(.secondary)
                 Spacer()
-                RollingCounter(value: meter.today.cached, size: 12, font: AppFont.medium(12))
+                RollingCounter(value: shown.today.cached, size: 12, font: AppFont.medium(12))
             }
             .font(AppFont.regular(12))
 
@@ -291,7 +442,6 @@ private struct DigitWheel: View {
     @State private var animationGeneration = 0
 
     private var rowHeight: CGFloat { size * 1.16 }
-    private var digit: Int { Self.digit(in: value, at: power) }
     private var trackDigits: [Int] { [9] + Array(0...9) + Array(0...9) + [0] }
 
     init(value: Int, power: Int, size: CGFloat, font: Font) {
@@ -303,17 +453,27 @@ private struct DigitWheel: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(trackDigits.enumerated()), id: \.offset) { row in
-                Text(String(row.element))
+        Group {
+            if reduceMotion {
+                Text(String(Self.digit(in: value, at: power)))
                     .font(font)
                     .frame(width: size * 0.64, height: rowHeight)
-                    .fixedSize()
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.15), value: value)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(trackDigits.enumerated()), id: \.offset) { row in
+                        Text(String(row.element))
+                            .font(font)
+                            .frame(width: size * 0.64, height: rowHeight)
+                            .fixedSize()
+                    }
+                }
+                .offset(y: -CGFloat(trackPosition) * rowHeight)
+                .frame(width: size * 0.64, height: rowHeight, alignment: .top)
+                .clipped()
             }
         }
-        .offset(y: -CGFloat(trackPosition) * rowHeight)
-        .frame(width: size * 0.64, height: rowHeight, alignment: .top)
-        .clipped()
         .accessibilityHidden(true)
         .onChange(of: value) { oldValue, newValue in
             let oldDigit = Self.digit(in: oldValue, at: power)
