@@ -63,7 +63,9 @@ final class TokenMeter {
     var menuTitle: String { today.total == 0 ? "Tokens" : today.total.compact + " today" }
 
     private static let viewedUsageKey = "lastViewedUsage.v1"
+    private static let scanCacheKey = "scanCache.v1"
     private static let preferences = UserDefaults(suiteName: "com.lightframe.TokenMeter") ?? .standard
+    @ObservationIgnored private var scanCache: ScanCache?
 
     var currentUsage: ViewedUsage {
         ViewedUsage(today: today, allTime: allTime, viewedAt: Date())
@@ -83,6 +85,18 @@ final class TokenMeter {
         .appending(path: ".codex/sessions", directoryHint: .isDirectory)
 
     init() {
+        if let data = Self.preferences.data(forKey: Self.scanCacheKey) {
+            scanCache = try? JSONDecoder().decode(ScanCache.self, from: data)
+        }
+        if let scanCache {
+            let isToday = Calendar.current.isDateInToday(scanCache.dayStart)
+            for file in scanCache.files.values {
+                allTime.add(file.allTime)
+                if isToday { today.add(file.today) }
+                if file.latest != nil { sessionCount += 1 }
+            }
+            lastUpdated = Date()
+        }
         Task { [weak self] in
             while let self, !Task.isCancelled {
                 await self.refresh()
@@ -99,83 +113,22 @@ final class TokenMeter {
             return
         }
         isLoading = true
+        let previousCache = scanCache
         let result = await Task.detached(priority: .utility) { [root] in
-            Self.scan(root: root)
+            UsageScanner.scan(root: root, previous: previousCache)
         }.value
+        if let newCache = result.cache {
+            if newCache != scanCache, let data = try? JSONEncoder().encode(newCache) {
+                Self.preferences.set(data, forKey: Self.scanCacheKey)
+            }
+            scanCache = newCache
+        }
         today = result.today
         allTime = result.allTime
         sessionCount = result.count
         error = result.error
         lastUpdated = Date()
         isLoading = false
-    }
-
-    nonisolated private static func scan(root: URL) -> (today: Usage, allTime: Usage, count: Int, error: String?) {
-        let manager = FileManager.default
-        guard manager.fileExists(atPath: root.path) else {
-            return (Usage(), Usage(), 0, "Codex 기록 폴더를 찾을 수 없습니다.")
-        }
-        guard let files = manager.enumerator(at: root, includingPropertiesForKeys: nil) else {
-            return (Usage(), Usage(), 0, "Codex 기록 폴더를 읽을 수 없습니다.")
-        }
-
-        var today = Usage()
-        var allTime = Usage()
-        var count = 0
-        let calendar = Calendar.current
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        for case let url as URL in files where url.pathExtension == "jsonl" {
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            var previous = Usage()
-            var found = false
-
-            for line in text.split(separator: "\n") {
-                guard let data = line.data(using: .utf8),
-                      let record = try? JSONDecoder().decode(LogRecord.self, from: data),
-                      record.payload.type == "token_count",
-                      let current = record.payload.info?.totalTokenUsage else { continue }
-                found = true
-                let next = current.usage
-                let delta = next.total < previous.total ? next : next - previous
-                allTime.add(delta)
-                if let timestamp = record.timestamp,
-                   let date = formatter.date(from: timestamp),
-                   calendar.isDateInToday(date) {
-                    today.add(delta)
-                }
-                previous = next
-            }
-            if found { count += 1 }
-        }
-        return (today, allTime, count, nil)
-    }
-}
-
-private struct LogRecord: Decodable {
-    let timestamp: String?
-    let payload: Payload
-
-    struct Payload: Decodable {
-        let type: String
-        let info: Info?
-    }
-    struct Info: Decodable {
-        let totalTokenUsage: TokenUsage?
-        enum CodingKeys: String, CodingKey { case totalTokenUsage = "total_token_usage" }
-    }
-    struct TokenUsage: Decodable {
-        let inputTokens: Int
-        let outputTokens: Int
-        let cachedInputTokens: Int?
-        enum CodingKeys: String, CodingKey {
-            case inputTokens = "input_tokens", outputTokens = "output_tokens"
-            case cachedInputTokens = "cached_input_tokens"
-        }
-        var usage: Usage {
-            Usage(input: inputTokens, output: outputTokens, cached: cachedInputTokens ?? 0)
-        }
     }
 }
 
@@ -241,6 +194,10 @@ private struct MeterView: View {
             }
             displayed = previous
             settled = previous
+        } else if meter.lastUpdated != nil, meter.error == nil {
+            let latestKnown = meter.currentUsage
+            displayed = latestKnown
+            settled = latestKnown
         }
         let currentOpening = openingID
         Task { await preparePresentation(for: currentOpening) }
@@ -271,7 +228,7 @@ private struct MeterView: View {
             return
         }
 
-        var previous = meter.lastViewedUsage() ?? latest
+        var previous = settled ?? meter.lastViewedUsage() ?? latest
         if !Calendar.current.isDate(previous.viewedAt, inSameDayAs: latest.viewedAt) {
             previous.today = Usage()
             previous.viewedAt = latest.viewedAt
