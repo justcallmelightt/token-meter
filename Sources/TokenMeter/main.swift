@@ -3,20 +3,94 @@ import SwiftUI
 
 @main
 struct TokenMeterApp: App {
-    @State private var meter = TokenMeter()
+    @NSApplicationDelegateAdaptor(TokenMeterDelegate.self) private var delegate
 
     var body: some Scene {
-        MenuBarExtra {
-            MeterView(meter: meter)
-                .frame(width: 316)
-        } label: {
-            Label {
-                Text(meter.menuTitle).font(AppFont.regular(12))
-            } icon: {
-                Image(systemName: "circle.hexagongrid.fill")
-            }
+        Settings { EmptyView() }
+    }
+}
+
+private final class MeterPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
+@MainActor
+private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private let meter = TokenMeter()
+    private var statusItem: NSStatusItem?
+    private var panel: MeterPanel?
+    private var titleTimer: Timer?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        guard let button = item.button else { return }
+        button.image = NSImage(systemSymbolName: "circle.hexagongrid.fill", accessibilityDescription: "Token Meter")
+        button.image?.isTemplate = true
+        button.title = " " + meter.menuTitle
+        button.target = self
+        button.action = #selector(togglePanel)
+        statusItem = item
+
+        titleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateTitle() }
         }
-        .menuBarExtraStyle(.window)
+    }
+
+    private func updateTitle() {
+        statusItem?.button?.title = " " + meter.menuTitle
+    }
+
+    @objc private func togglePanel() {
+        if panel?.isVisible == true {
+            panel?.orderOut(nil)
+            return
+        }
+
+        if panel == nil {
+            let window = MeterPanel(contentRect: NSRect(x: 0, y: 0, width: 316, height: 342),
+                                    styleMask: [.borderless, .nonactivatingPanel],
+                                    backing: .buffered, defer: false)
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            // The panel's rectangular shadow remains visible outside the rounded glass.
+            window.hasShadow = false
+            window.level = .popUpMenu
+            window.collectionBehavior = [.transient, .moveToActiveSpace]
+            window.delegate = self
+            let hosting = NSHostingView(rootView: MeterView(meter: meter).frame(width: 316))
+            if #available(macOS 26.0, *) {
+                let glass = NSGlassEffectView()
+                glass.style = .regular
+                glass.cornerRadius = 24
+                glass.contentView = hosting
+                window.contentView = glass
+            } else {
+                let backdrop = NSVisualEffectView()
+                backdrop.material = .popover
+                backdrop.blendingMode = .behindWindow
+                backdrop.state = .active
+                hosting.frame = backdrop.bounds
+                hosting.autoresizingMask = [.width, .height]
+                backdrop.addSubview(hosting)
+                window.contentView = backdrop
+            }
+            panel = window
+        }
+
+        guard let panel, let button = statusItem?.button, let buttonWindow = button.window else { return }
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let height = max(342, panel.contentView?.fittingSize.height ?? 342)
+        panel.setContentSize(NSSize(width: 316, height: height))
+        let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let x = min(max(buttonFrame.midX - 158, screenFrame.minX + 8), screenFrame.maxX - 324)
+        panel.setFrameTopLeftPoint(NSPoint(x: x, y: buttonFrame.minY - 6))
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        panel?.orderOut(nil)
     }
 }
 
@@ -271,9 +345,10 @@ private struct MeterView: View {
             HStack(spacing: 10) {
                 Image(systemName: "circle.hexagongrid.fill")
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(colorScheme == .dark ? Color(white: 0.11) : .white)
                     .frame(width: 36, height: 36)
-                    .background(LinearGradient(colors: [.indigo, .purple], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 11))
+                    .background(colorScheme == .dark ? Color(white: 0.88) : Color(white: 0.18),
+                                in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Token Meter").font(AppFont.semibold(14))
                     Text("Local Codex usage").font(AppFont.regular(11)).foregroundStyle(.secondary)
@@ -301,8 +376,8 @@ private struct MeterView: View {
             .padding(.bottom, 18)
 
             HStack(spacing: 8) {
-                metric("Input", value: shown.today.input, tint: .indigo)
-                metric("Output", value: shown.today.output, tint: .purple)
+                metric("Input", value: shown.today.input)
+                metric("Output", value: shown.today.output)
             }
 
             Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 18)
@@ -341,19 +416,13 @@ private struct MeterView: View {
             .padding(.top, 18)
         }
         .padding(20)
-        .background {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.regularMaterial)
-                .overlay(alignment: .top) {
-                    RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(colorScheme == .dark ? 0.18 : 0.6), lineWidth: 1)
-                }
-        }
+        .modifier(MeterGlassSurface(colorScheme: colorScheme))
     }
 
-    private func metric(_ title: String, value: Int, tint: Color) -> some View {
+    private func metric(_ title: String, value: Int) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 5) {
-                Circle().fill(tint).frame(width: 6, height: 6)
+                Circle().fill(.primary.opacity(0.48)).frame(width: 6, height: 6)
                 Text(title).foregroundStyle(.secondary)
             }
             .font(AppFont.regular(11))
@@ -362,7 +431,32 @@ private struct MeterView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(13)
-        .background(tint.opacity(0.075), in: RoundedRectangle(cornerRadius: 12))
+        .background(.primary.opacity(colorScheme == .dark ? 0.06 : 0.045),
+                    in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct MeterGlassSurface: ViewModifier {
+    let colorScheme: ColorScheme
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24)
+                        .strokeBorder(.white.opacity(colorScheme == .dark ? 0.22 : 0.32), lineWidth: 1)
+                }
+        } else {
+            content.background {
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(.regularMaterial)
+                    .overlay(alignment: .top) {
+                        RoundedRectangle(cornerRadius: 24)
+                            .strokeBorder(.white.opacity(colorScheme == .dark ? 0.18 : 0.6), lineWidth: 1)
+                    }
+            }
+        }
     }
 }
 
