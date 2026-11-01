@@ -64,7 +64,7 @@ private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindo
                 glass.style = .regular
                 glass.cornerRadius = 24
                 glass.contentView = NSView()
-                glass.alphaValue = 0.93
+                glass.alphaValue = 0.94
 
                 let surface = NSView()
                 surface.wantsLayer = true
