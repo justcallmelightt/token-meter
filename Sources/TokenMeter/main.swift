@@ -63,8 +63,20 @@ private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindo
                 let glass = NSGlassEffectView()
                 glass.style = .regular
                 glass.cornerRadius = 24
-                glass.contentView = hosting
-                window.contentView = glass
+                glass.contentView = NSView()
+                glass.alphaValue = 0.93
+
+                let surface = NSView()
+                surface.wantsLayer = true
+                surface.layer?.cornerRadius = 24
+                surface.layer?.masksToBounds = true
+                glass.frame = surface.bounds
+                glass.autoresizingMask = [.width, .height]
+                hosting.frame = surface.bounds
+                hosting.autoresizingMask = [.width, .height]
+                surface.addSubview(glass)
+                surface.addSubview(hosting)
+                window.contentView = surface
             } else {
                 let backdrop = NSVisualEffectView()
                 backdrop.material = .popover
@@ -443,6 +455,14 @@ private struct MeterGlassSurface: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
             content
+                .background {
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(LinearGradient(
+                            colors: [.clear, .clear, .black.opacity(colorScheme == .dark ? 0.16 : 0.06)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ))
+                }
                 .overlay {
                     RoundedRectangle(cornerRadius: 24)
                         .strokeBorder(.white.opacity(colorScheme == .dark ? 0.22 : 0.32), lineWidth: 1)
