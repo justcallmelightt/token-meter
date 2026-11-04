@@ -1,6 +1,6 @@
 # Token Meter
 
-macOS 메뉴 막대에서 **로컬 Codex 세션 기록의 토큰 사용량**을 보여주는 SwiftUI 초안입니다.
+macOS 메뉴 막대에서 **로컬 Codex 세션 기록의 토큰 사용량**을 보여주는 SwiftUI 개발 초기 앱입니다.
 
 ```sh
 cd "/Users/justcallmelight_/Documents/New project/token-meter"
