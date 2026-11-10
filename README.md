@@ -1,6 +1,11 @@
 # Token Meter
 
+**언어 / Language:** [한국어](#한국어) · [English](#english)
+
+## 한국어
+
 macOS 메뉴 막대에서 **로컬 Codex 세션 기록의 토큰 사용량**을 보여주는 SwiftUI 개발 초기 앱입니다.
+
 ## 설치
 
 1. [GitHub Releases](https://github.com/justcallmelightt/token-meter/releases)에서 `TokenMeter-*-macOS-universal.zip`을 내려받아 압축을 풉니다.
@@ -33,3 +38,44 @@ Token Meter는 로그인 없이 이 Mac에 저장된 Codex 세션 기록을 읽�
 - 이 수치는 이 Mac에 남아 있는 기록만 반영하며 ChatGPT 계정 전체 사용량, 청구 금액 또는 계정 한도를 나타내지 않습니다.
 
 자세한 내용은 [개인정보 보호 및 보안](./SECURITY.md)을 참고하세요.
+
+---
+
+## English
+
+Token Meter is an early-stage SwiftUI menu bar app for viewing token usage from local Codex session records on this Mac.
+
+## Installation
+
+1. Download `TokenMeter-*-macOS-universal.zip` from [GitHub Releases](https://github.com/justcallmelightt/token-meter/releases) and unzip it.
+2. Move `Token Meter.app` to Applications and open it. The universal app supports Apple Silicon and Intel Macs running macOS 14 or later.
+3. This build is not notarized with an Apple Developer ID, so macOS may show a security warning on first launch. If it does, Control-click the app, choose **Open**, and confirm.
+4. Click the Token Meter icon in the menu bar to view usage.
+
+The app reads records from each Mac's `~/.codex/sessions/`. It shows no token counts on a Mac without local Codex session records.
+
+To run from source:
+
+```sh
+cd "/Users/justcallmelight_/Documents/New project/token-meter"
+swift run TokenMeter
+```
+
+The app reads `token_count` events from `~/.codex/sessions/**/*.jsonl` and sums input and output tokens by event time. Cached input is already part of input totals and is not added again. The first scan reads recent records from each session; later scans read only appended data. Scan results are cached in local app preferences, refreshed every 30 seconds, and can be refreshed manually.
+
+When the menu bar panel opens, Token Meter compares the last displayed value with the latest value and rolls changed digits to the new count. This also works after quitting and reopening the app, and while the panel remains open. Reduce Motion switches the rolling animation to a short fade. The app stores the last viewed count and scan cache locally and does not modify Codex session files.
+
+These numbers only reflect Codex session records stored on this Mac. They do not represent total ChatGPT account usage, usage on other devices, API charges, or account limits. Values can change if records are deleted or their format changes.
+
+## Privacy and Security
+
+Token Meter reads local Codex session records on this Mac without requiring a login.
+
+- It calculates input and output token counts and event timestamps from `token_count` events in `~/.codex/sessions/**/*.jsonl`. It does not modify or delete the original records.
+- The last viewed count and per-file scan cache are stored in macOS app preferences (`UserDefaults`). The cache includes relative paths, file sizes and modification times, read offsets, and token totals; it does not store conversation bodies.
+- App preferences are not an encrypted secret store. Protect access to this Mac user account and the Codex records folder.
+- The app has no login, cloud sync, analytics, or feature that sends usage or session records to an external server. It does not ask for a Codex password or API key.
+- Deleting app preferences removes the saved count and cache, so the app scans local records again the next time it runs. Original Codex records remain separate.
+- The displayed usage only reflects records still present on this Mac; it does not represent total ChatGPT account usage, billing, or account limits.
+
+See [Privacy and Security](./SECURITY.md) for details.
