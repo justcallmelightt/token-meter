@@ -408,7 +408,7 @@ private struct MeterView: View {
             }
             .padding(.bottom, 20)
 
-            Text(isKorean ? "오늘" : "TODAY").font(AppFont.semibold(10))
+            Text("TODAY").font(AppFont.semibold(10))
                 .tracking(1.6).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 RollingCounter(value: shown.today.total, size: 38, font: AppFont.semibold(38))
