@@ -1,6 +1,14 @@
 # Token Meter
 
 macOS 메뉴 막대에서 **로컬 Codex 세션 기록의 토큰 사용량**을 보여주는 SwiftUI 개발 초기 앱입니다.
+## 설치
+
+1. [GitHub Releases](https://github.com/justcallmelightt/token-meter/releases)에서 `TokenMeter-*-macOS-universal.zip`을 내려받아 압축을 풉니다.
+2. `Token Meter.app`을 응용 프로그램 폴더로 옮긴 뒤 실행합니다. Apple Silicon과 Intel Mac을 모두 지원하며 macOS 14 이상이 필요합니다.
+3. 현재 배포 빌드는 Apple의 Developer ID 공증을 받지 않아 처음 실행할 때 macOS가 개발자를 확인할 수 없다는 경고를 표시할 수 있습니다. 이 경우 앱을 Control-클릭해 **열기**를 선택하고 한 번 더 확인합니다.
+4. 메뉴 막대의 Token Meter 아이콘을 클릭하면 사용량을 볼 수 있습니다.
+
+앱은 각 Mac의 `~/.codex/sessions/` 기록을 읽습니다. 기록이 없는 Mac에서는 토큰 수치가 표시되지 않습니다.
 
 ```sh
 cd "/Users/justcallmelight_/Documents/New project/token-meter"
