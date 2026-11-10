@@ -15,6 +15,19 @@ private final class MeterPanel: NSPanel {
 }
 
 @MainActor
+private enum AppLanguage {
+    static let key = "appLanguage"
+    static let defaults = UserDefaults(suiteName: "com.lightframe.TokenMeter") ?? .standard
+
+    static var isKorean: Bool {
+        if let selectedLanguage = defaults.string(forKey: key) {
+            return selectedLanguage == "ko"
+        }
+        return Locale.preferredLanguages.first?.hasPrefix("ko") ?? false
+    }
+}
+
+@MainActor
 private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let meter = TokenMeter()
     private var statusItem: NSStatusItem?
@@ -146,7 +159,12 @@ final class TokenMeter {
     var error: String?
     var isLoading = false
 
-    var menuTitle: String { today.total == 0 ? "Tokens" : today.total.compact + " today" }
+    var menuTitle: String {
+        if AppLanguage.isKorean {
+            return today.total == 0 ? "토큰" : today.total.compact + " 오늘"
+        }
+        return today.total == 0 ? "Tokens" : today.total.compact + " today"
+    }
 
     private static let viewedUsageKey = "lastViewedUsage.v1"
     private static let scanCacheKey = "scanCache.v1"
@@ -229,18 +247,21 @@ private extension Int {
 private struct MeterView: View {
     let meter: TokenMeter
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(AppLanguage.key, store: AppLanguage.defaults) private var selectedLanguage = ""
     @State private var displayed: ViewedUsage?
     @State private var settled: ViewedUsage?
     @State private var isOpen = false
     @State private var acceptingUpdates = false
     @State private var openingID = 0
 
+    private var isKorean: Bool { AppLanguage.isKorean }
+
     var body: some View {
         Group {
             if let displayed {
                 content(displayed)
             } else {
-                ProgressView("기록 읽는 중")
+                ProgressView(isKorean ? "기록 읽는 중" : "Loading records")
                     .font(AppFont.regular(12))
                     .frame(maxWidth: .infinity)
                     .frame(height: 248)
@@ -363,64 +384,74 @@ private struct MeterView: View {
                                 in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Token Meter").font(AppFont.semibold(14))
-                    Text("Local Codex usage").font(AppFont.regular(11)).foregroundStyle(.secondary)
+                    Text(isKorean ? "로컬 Codex 사용량" : "Local Codex usage")
+                        .font(AppFont.regular(11)).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button {
+                    selectedLanguage = isKorean ? "en" : "ko"
+                } label: {
+                    Text(isKorean ? "EN" : "한")
+                        .font(AppFont.semibold(11))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(PressStyle())
+                .help(isKorean ? "영어로 보기" : "한국어로 보기")
                 Button { Task { await meter.refresh() } } label: {
                     Image(systemName: "arrow.clockwise")
                     .font(AppFont.semibold(12))
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(PressStyle())
-                .help("새로고침")
+                .help(isKorean ? "새로고침" : "Refresh")
                 .disabled(meter.isLoading)
             }
             .padding(.bottom, 20)
 
-            Text("TODAY").font(AppFont.semibold(10))
+            Text(isKorean ? "오늘" : "TODAY").font(AppFont.semibold(10))
                 .tracking(1.6).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 RollingCounter(value: shown.today.total, size: 38, font: AppFont.semibold(38))
                     .tracking(-1.6)
-                Text("tokens").font(AppFont.regular(13)).foregroundStyle(.secondary)
+                Text(isKorean ? "토큰" : "tokens").font(AppFont.regular(13)).foregroundStyle(.secondary)
             }
             .padding(.top, 3)
             .padding(.bottom, 18)
 
             HStack(spacing: 8) {
-                metric("Input", value: shown.today.input)
-                metric("Output", value: shown.today.output)
+                metric(isKorean ? "입력" : "Input", value: shown.today.input)
+                metric(isKorean ? "출력" : "Output", value: shown.today.output)
             }
 
             Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 18)
 
             HStack {
-                Text("전체 기록").foregroundStyle(.secondary)
+                Text(isKorean ? "전체 기록" : "All-time").foregroundStyle(.secondary)
                 Spacer()
                 HStack(spacing: 4) {
                     RollingCounter(value: shown.allTime.total, size: 12, font: AppFont.medium(12))
-                    Text("tokens")
+                    Text(isKorean ? "토큰" : "tokens")
                 }
             }
             .font(AppFont.regular(12))
             .padding(.bottom, 8)
             HStack {
-                Text("오늘 캐시 입력").foregroundStyle(.secondary)
+                Text(isKorean ? "오늘 캐시 입력" : "Today's cached input").foregroundStyle(.secondary)
                 Spacer()
                 RollingCounter(value: shown.today.cached, size: 12, font: AppFont.medium(12))
             }
             .font(AppFont.regular(12))
 
             if let error = meter.error {
-                Text(error).font(AppFont.regular(11)).foregroundStyle(.orange)
+                Text(localizedError(error)).font(AppFont.regular(11)).foregroundStyle(.orange)
                     .padding(.top, 14)
             }
 
             HStack {
-                Text("로컬 세션 \(meter.sessionCount)개")
+                Text(isKorean ? "로컬 세션 \(meter.sessionCount)개" : "\(meter.sessionCount) local sessions")
                 Spacer()
                 if let date = meter.lastUpdated {
-                    Text("업데이트 \(date, style: .time)")
+                    Text(isKorean ? "업데이트 \(date, style: .time)" : "Updated \(date, style: .time)")
                 }
             }
             .font(AppFont.regular(10))
@@ -429,6 +460,18 @@ private struct MeterView: View {
         }
         .padding(20)
         .modifier(MeterGlassSurface(colorScheme: colorScheme))
+    }
+
+    private func localizedError(_ error: String) -> String {
+        guard !isKorean else { return error }
+        switch error {
+        case "Codex 기록 폴더를 찾을 수 없습니다.":
+            return "The Codex sessions folder could not be found."
+        case "Codex 기록 폴더를 읽을 수 없습니다.":
+            return "The Codex sessions folder could not be read."
+        default:
+            return error
+        }
     }
 
     private func metric(_ title: String, value: Int) -> some View {
