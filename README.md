@@ -26,6 +26,16 @@ swift run TokenMeter
 
 이 수치는 이 Mac에 저장된 Codex 세션 기록에 한정됩니다. ChatGPT 전체 계정 사용량, 다른 기기의 사용량, API 청구 금액이나 계정 사용 한도를 뜻하지 않습니다. 기록이 삭제되거나 저장 형식이 바뀌면 표시값도 달라질 수 있습니다.
 
+## 계정 한도와 설정
+
+메뉴 막대 창의 설정(톱니바퀴)에서 Codex·Claude Code 한도 표시와 업데이트 확인을 관리할 수 있습니다.
+
+- Codex 한도는 설치된 Codex CLI의 `app-server`를 통해 현재 로그인한 계정의 사용 창과 재설정 시각을 읽습니다. 계정이나 CLI 버전에서 한도 응답을 제공하지 않으면 표시되지 않을 수 있습니다.
+- Claude Code 한도는 Claude Code 상태줄 입력에 포함된 5시간·주간 사용률과 재설정 시각을 사용합니다. 설정에서 **Claude Code 연결**을 선택하면 `~/.claude/settings.json`에 로컬 브리지를 연결합니다. 기존 상태줄 명령을 보존해 계속 실행하고, 연결 해제 시 이전 설정을 복원합니다. Claude Code 세션에서 데이터가 들어온 뒤 한도를 표시합니다.
+- Token Meter는 6시간마다 GitHub의 최신 공개 릴리즈를 확인합니다. 업데이트가 있으면 다운로드 페이지를 열 수 있으며, 설치는 직접 진행해야 합니다.
+- 패널 내용이 화면 높이보다 길면 패널 안에서 스크롤해 전체 항목을 확인할 수 있습니다.
+- 한도 수치와 갱신 시각은 이 Mac의 앱 설정에 저장됩니다. Claude Code 브리지는 한도 퍼센트와 재설정 시각, 연결 해제 시 복원할 기존 상태줄 설정·명령을 앱 지원 폴더에 저장합니다. 이 파일은 현재 사용자만 읽고 쓸 수 있게 제한합니다.
+
 ## 개인정보 보호 및 보안
 
 Token Meter는 로그인 없이 이 Mac에 저장된 Codex 세션 기록을 읽는 로컬 메뉴 막대 앱입니다.
@@ -33,9 +43,10 @@ Token Meter는 로그인 없이 이 Mac에 저장된 Codex 세션 기록을 읽�
 - `~/.codex/sessions/**/*.jsonl`의 `token_count` 이벤트에서 입력·출력 토큰 수와 발생 시각을 계산합니다. 원본 기록 파일은 수정하거나 삭제하지 않습니다.
 - 마지막으로 본 수치와 파일별 스캔 캐시는 macOS의 앱 설정(`UserDefaults`)에 저장됩니다. 캐시에는 기록 폴더 기준 상대 경로, 파일 크기·수정 시각, 읽은 위치와 토큰 합계가 포함됩니다. 대화 본문은 캐시에 저장하지 않습니다.
 - 앱 설정은 암호화된 비밀 저장소가 아닙니다. 이 Mac의 사용자 계정과 Codex 기록 폴더에 대한 접근 권한을 관리해야 합니다.
-- 현재 앱에는 로그인, 클라우드 동기화, 분석 도구 또는 사용량·세션 기록을 외부 서버로 전송하는 기능이 없습니다. Codex 계정 비밀번호나 API 키도 요구하지 않습니다.
+- Token Meter는 세션 본문이나 인증 토큰을 외부로 보내지 않습니다. Codex 한도를 켜면 Codex CLI app-server가 기존 로그인 정보를 사용해 OpenAI에서 한도 정보를 조회합니다. Claude 한도는 Claude Code가 상태줄에 전달한 데이터를 로컬 브리지로 저장합니다.
+- 업데이트 확인이 켜져 있으면 GitHub 공개 릴리즈 API에 버전 확인 요청을 보냅니다. Codex 세션 기록이나 계정 토큰은 요청에 포함하지 않습니다.
 - 앱 설정을 삭제하면 저장된 수치와 캐시가 사라져 다음 실행 시 로컬 기록을 다시 읽습니다. Codex 원본 기록은 별도로 남습니다.
-- 이 수치는 이 Mac에 남아 있는 기록만 반영하며 ChatGPT 계정 전체 사용량, 청구 금액 또는 계정 한도를 나타내지 않습니다.
+- 로컬 토큰 합계는 이 Mac에 남아 있는 기록만 반영합니다. 계정 한도는 Codex CLI app-server와 Claude Code 상태줄이 제공한 최신 값을 별도로 표시하며, 계정·플랜·버전에 따라 제공되지 않을 수 있습니다.
 
 자세한 내용은 [개인정보 보호 및 보안](./SECURITY.md)을 참고하세요.
 
@@ -67,6 +78,16 @@ When the menu bar panel opens, Token Meter compares the last displayed value wit
 
 These numbers only reflect Codex session records stored on this Mac. They do not represent total ChatGPT account usage, usage on other devices, API charges, or account limits. Values can change if records are deleted or their format changes.
 
+## Account limits and settings
+
+Use the gear button in the menu bar panel to control Codex and Claude Code limits and update checks.
+
+- Codex limits come from the signed-in account through the installed Codex CLI `app-server`, including usage windows and reset times. A limit may be unavailable for some accounts or CLI versions.
+- Claude Code limits use the five-hour and weekly percentages and reset times in Claude Code status line input. Selecting **Connect Claude Code** in Settings adds a local bridge to `~/.claude/settings.json`. The bridge preserves and continues running an existing status line command, then restores the previous setting when disconnected. Limits appear after Claude Code sends status line data from a session.
+- Token Meter checks GitHub's latest published release every six hours. If a newer version is available, you can open its download page and install it manually.
+- If the panel is taller than the available screen space, scroll inside it to reach all items.
+- Limit values and update times are stored in this Mac's app preferences. The Claude Code bridge stores limit percentages and reset times, plus the previous status line configuration and command needed for restoration, in the app support folder with user-only file permissions.
+
 ## Privacy and Security
 
 Token Meter reads local Codex session records on this Mac without requiring a login.
@@ -74,8 +95,9 @@ Token Meter reads local Codex session records on this Mac without requiring a lo
 - It calculates input and output token counts and event timestamps from `token_count` events in `~/.codex/sessions/**/*.jsonl`. It does not modify or delete the original records.
 - The last viewed count and per-file scan cache are stored in macOS app preferences (`UserDefaults`). The cache includes relative paths, file sizes and modification times, read offsets, and token totals; it does not store conversation bodies.
 - App preferences are not an encrypted secret store. Protect access to this Mac user account and the Codex records folder.
-- The app has no login, cloud sync, analytics, or feature that sends usage or session records to an external server. It does not ask for a Codex password or API key.
+- Token Meter does not send session transcripts or authentication tokens to external services. When Codex limits are enabled, Codex CLI app-server uses the existing sign-in to fetch limit information from OpenAI. Claude limits are saved locally from data Claude Code passes to its status line.
+- When update checks are enabled, the app requests version information from GitHub's public releases API. It does not include Codex session records or account tokens in that request.
 - Deleting app preferences removes the saved count and cache, so the app scans local records again the next time it runs. Original Codex records remain separate.
-- The displayed usage only reflects records still present on this Mac; it does not represent total ChatGPT account usage, billing, or account limits.
+- Local token totals only reflect records still present on this Mac. Account limits are separate values supplied by Codex CLI app-server or Claude Code status line and may be unavailable for some accounts, plans, or versions.
 
 See [Privacy and Security](./SECURITY.md) for details.

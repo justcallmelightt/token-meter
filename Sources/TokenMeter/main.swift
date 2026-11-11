@@ -2,11 +2,22 @@ import AppKit
 import SwiftUI
 
 @main
+private struct TokenMeterEntryPoint {
+    @MainActor
+    static func main() {
+        if CommandLine.arguments.dropFirst().first == "--claude-usage-bridge" {
+            ClaudeStatuslineBridge.captureStatuslineInput()
+            return
+        }
+        TokenMeterApp.main()
+    }
+}
+
 struct TokenMeterApp: App {
     @NSApplicationDelegateAdaptor(TokenMeterDelegate.self) private var delegate
 
     var body: some Scene {
-        Settings { EmptyView() }
+        Settings { TokenMeterSettingsView(limits: LimitMonitor.shared) }
     }
 }
 
@@ -15,7 +26,7 @@ private final class MeterPanel: NSPanel {
 }
 
 @MainActor
-private enum AppLanguage {
+enum AppLanguage {
     static let key = "appLanguage"
     static let defaults = UserDefaults(suiteName: "com.lightframe.TokenMeter") ?? .standard
 
@@ -30,8 +41,12 @@ private enum AppLanguage {
 @MainActor
 private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let meter = TokenMeter()
+    private let limits = LimitMonitor.shared
     private var statusItem: NSStatusItem?
     private var panel: MeterPanel?
+    private var panelHostingView: NSHostingView<AnyView>?
+    private var panelScrollView: NSScrollView?
+    private var settingsWindow: NSWindow?
     private var titleTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -44,6 +59,7 @@ private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindo
         button.target = self
         button.action = #selector(togglePanel)
         statusItem = item
+        limits.start()
 
         titleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateTitle() }
@@ -52,6 +68,7 @@ private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindo
 
     private func updateTitle() {
         statusItem?.button?.title = " " + meter.menuTitle
+        if panel?.isVisible == true { fitPanelToContent() }
     }
 
     @objc private func togglePanel() {
@@ -71,7 +88,21 @@ private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindo
             window.level = .popUpMenu
             window.collectionBehavior = [.transient, .moveToActiveSpace]
             window.delegate = self
-            let hosting = NSHostingView(rootView: MeterView(meter: meter).frame(width: 316))
+            let hosting = NSHostingView(rootView: AnyView(MeterView(
+                meter: meter,
+                limits: limits,
+                openSettings: { [weak self] in self?.showSettings() }
+            ).frame(width: 316).fixedSize(horizontal: false, vertical: true)))
+            hosting.sizingOptions = [.intrinsicContentSize]
+            let scrollView = NSScrollView()
+            scrollView.drawsBackground = false
+            scrollView.borderType = .noBorder
+            scrollView.hasVerticalScroller = true
+            scrollView.hasHorizontalScroller = false
+            scrollView.autohidesScrollers = true
+            scrollView.scrollerStyle = .overlay
+            scrollView.contentView.drawsBackground = false
+            scrollView.documentView = hosting
             if #available(macOS 26.0, *) {
                 let glass = NSGlassEffectView()
                 glass.style = .regular
@@ -85,33 +116,63 @@ private final class TokenMeterDelegate: NSObject, NSApplicationDelegate, NSWindo
                 surface.layer?.masksToBounds = true
                 glass.frame = surface.bounds
                 glass.autoresizingMask = [.width, .height]
-                hosting.frame = surface.bounds
-                hosting.autoresizingMask = [.width, .height]
+                scrollView.frame = surface.bounds
+                scrollView.autoresizingMask = [.width, .height]
                 surface.addSubview(glass)
-                surface.addSubview(hosting)
+                surface.addSubview(scrollView)
                 window.contentView = surface
             } else {
                 let backdrop = NSVisualEffectView()
                 backdrop.material = .popover
                 backdrop.blendingMode = .behindWindow
                 backdrop.state = .active
-                hosting.frame = backdrop.bounds
-                hosting.autoresizingMask = [.width, .height]
-                backdrop.addSubview(hosting)
+                scrollView.frame = backdrop.bounds
+                scrollView.autoresizingMask = [.width, .height]
+                backdrop.addSubview(scrollView)
                 window.contentView = backdrop
             }
+            panelHostingView = hosting
+            panelScrollView = scrollView
             panel = window
         }
 
+        panel?.makeKeyAndOrderFront(nil)
+        fitPanelToContent()
+        if let scrollView = panelScrollView {
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    private func fitPanelToContent() {
         guard let panel, let button = statusItem?.button, let buttonWindow = button.window else { return }
-        panel.contentView?.layoutSubtreeIfNeeded()
-        let height = max(342, panel.contentView?.fittingSize.height ?? 342)
-        panel.setContentSize(NSSize(width: 316, height: height))
         let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        panelHostingView?.layoutSubtreeIfNeeded()
+        let measuredHeight = ceil(panelHostingView?.fittingSize.height ?? 342)
+        let availableHeight = max(220, buttonFrame.minY - screenFrame.minY - 12)
+        let height = min(max(342, measuredHeight), availableHeight)
+        panel.setContentSize(NSSize(width: 316, height: height))
+        if let hosting = panelHostingView {
+            hosting.frame = NSRect(x: 0, y: 0, width: 316, height: measuredHeight)
+        }
         let x = min(max(buttonFrame.midX - 158, screenFrame.minX + 8), screenFrame.maxX - 324)
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: buttonFrame.minY - 6))
-        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func showSettings() {
+        if settingsWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 470, height: 560),
+                                  styleMask: [.titled, .closable, .miniaturizable],
+                                  backing: .buffered, defer: false)
+            window.title = "Token Meter Settings"
+            window.center()
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: TokenMeterSettingsView(limits: limits))
+            settingsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -246,6 +307,8 @@ private extension Int {
 
 private struct MeterView: View {
     let meter: TokenMeter
+    let limits: LimitMonitor
+    let openSettings: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(AppLanguage.key, store: AppLanguage.defaults) private var selectedLanguage = ""
     @State private var displayed: ViewedUsage?
@@ -397,6 +460,13 @@ private struct MeterView: View {
                 }
                 .buttonStyle(PressStyle())
                 .help(isKorean ? "영어로 보기" : "한국어로 보기")
+                Button(action: openSettings) {
+                    Image(systemName: "gearshape")
+                        .font(AppFont.semibold(12))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(PressStyle())
+                .help(isKorean ? "설정" : "Settings")
                 Button { Task { await meter.refresh() } } label: {
                     Image(systemName: "arrow.clockwise")
                     .font(AppFont.semibold(12))
@@ -421,6 +491,26 @@ private struct MeterView: View {
             HStack(spacing: 8) {
                 metric(isKorean ? "입력" : "Input", value: shown.today.input)
                 metric(isKorean ? "출력" : "Output", value: shown.today.output)
+            }
+
+            UsageLimitsCompactView(limits: limits, isKorean: isKorean)
+                .padding(.top, 8)
+
+            if let release = limits.release {
+                Button { limits.openRelease() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.circle")
+                        Text(isKorean ? "Token Meter 업데이트 · \(release.version)" : "Token Meter update · \(release.version)")
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                    }
+                    .font(AppFont.medium(10))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+                }
+                .buttonStyle(PressStyle())
+                .padding(.top, 7)
             }
 
             Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 18)
@@ -629,7 +719,7 @@ private struct DigitWheel: View {
     }
 }
 
-private enum AppFont {
+enum AppFont {
     static func regular(_ size: CGFloat) -> Font { .custom("Pretendard-Regular", size: size) }
     static func medium(_ size: CGFloat) -> Font { .custom("Pretendard-Medium", size: size) }
     static func semibold(_ size: CGFloat) -> Font { .custom("Pretendard-SemiBold", size: size) }
