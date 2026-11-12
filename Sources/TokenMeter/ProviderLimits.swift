@@ -212,51 +212,59 @@ private enum CodexRateLimitReader {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        var environment = ProcessInfo.processInfo.environment
+        let standardPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        environment["PATH"] = ([URL(fileURLWithPath: executable).deletingLastPathComponent().path]
+            + standardPaths + (environment["PATH"] ?? "").split(separator: ":").map(String.init))
+            .joined(separator: ":")
+        process.environment = environment
         try process.run()
-
-        let messages = [
-            ["method": "initialize", "id": 0, "params": ["clientInfo": ["name": "token_meter", "title": "Token Meter", "version": "0.2.0"]]] as [String: Any],
-            ["method": "initialized", "params": [:]] as [String: Any],
-            ["method": "account/rateLimits/read", "id": 2, "params": [:]] as [String: Any]
-        ]
-        for message in messages {
-            var data = try JSONSerialization.data(withJSONObject: message, options: [.fragmentsAllowed])
-            data.append(0x0A)
-            input.fileHandleForWriting.write(data)
+        let reader = RPCResponseReader()
+        reader.start(output.fileHandleForReading)
+        defer {
+            reader.stop(output.fileHandleForReading)
+            try? input.fileHandleForWriting.close()
+            if process.isRunning { process.terminate() }
+            process.waitUntilExit()
         }
-        try? input.fileHandleForWriting.close()
 
-        let responseData = output.fileHandleForReading.readDataToEndOfFile()
-        if process.isRunning { process.terminate() }
-        process.waitUntilExit()
-        for line in String(decoding: responseData, as: UTF8.self).split(whereSeparator: \.isNewline) {
-            guard let lineData = String(line).data(using: .utf8),
-                  let envelope = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                  (envelope["id"] as? Int) == 2 else { continue }
-            if let error = envelope["error"] as? [String: Any] {
-                throw ProviderError.rpc(error["message"] as? String ?? "Codex 한도를 읽지 못했습니다.")
-            }
-            guard let result = envelope["result"] as? [String: Any] else { throw ProviderError.noLimits }
-            let buckets = result["rateLimitsByLimitId"] as? [String: [String: Any]]
-            let sources = buckets.map { $0.keys.sorted().compactMap { $0 == "codex" || $0 == "codex_other" ? $0 : nil }.compactMap { buckets?[$0] } }
-                ?? (result["rateLimits"] as? [String: Any]).map { [$0] }
-                ?? []
-            let windows = sources.flatMap { bucket -> [LimitWindow] in
-                ["primary", "secondary"].compactMap { key in
-                    guard let window = bucket[key] as? [String: Any],
-                          let percent = (window["usedPercent"] as? NSNumber)?.doubleValue else { return nil }
-                    let minutes = (window["windowDurationMins"] as? NSNumber)?.intValue
-                    let name = minutes.map(Self.windowName(minutes:)) ?? key.capitalized
-                    let reset = (window["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
-                    let limitID = bucket["limitId"] as? String ?? "codex"
-                    return LimitWindow(id: "\(limitID)-\(key)", title: name,
-                                       usedPercent: min(max(percent, 0), 100), resetsAt: reset)
-                }
-            }
-            guard !windows.isEmpty else { throw ProviderError.noLimits }
-            return LimitSnapshot(windows: windows, updatedAt: Date())
+        try send(["method": "initialize", "id": 0,
+                  "params": ["clientInfo": ["name": "token_meter", "title": "Token Meter", "version": "0.2.1"]]], to: input)
+        let initialized = try reader.wait(for: 0, timeout: 8)
+        if let error = initialized["error"] as? [String: Any] {
+            throw ProviderError.rpc(error["message"] as? String ?? "Codex app-server 초기화에 실패했습니다.")
         }
-        throw ProviderError.noLimits
+        try send(["method": "initialized", "params": [:]], to: input)
+        try send(["method": "account/rateLimits/read", "id": 2, "params": [:]], to: input)
+        let response = try reader.wait(for: 2, timeout: 12)
+        if let error = response["error"] as? [String: Any] {
+            throw ProviderError.rpc(error["message"] as? String ?? "Codex 한도를 읽지 못했습니다.")
+        }
+        guard let result = response["result"] as? [String: Any] else { throw ProviderError.noLimits }
+        let buckets = result["rateLimitsByLimitId"] as? [String: [String: Any]]
+        let sources = buckets.map { $0.keys.sorted().compactMap { $0 == "codex" || $0 == "codex_other" ? $0 : nil }.compactMap { buckets?[$0] } }
+            ?? (result["rateLimits"] as? [String: Any]).map { [$0] }
+            ?? []
+        let windows = sources.flatMap { bucket -> [LimitWindow] in
+            ["primary", "secondary"].compactMap { key in
+                guard let window = bucket[key] as? [String: Any],
+                      let percent = (window["usedPercent"] as? NSNumber)?.doubleValue else { return nil }
+                let minutes = (window["windowDurationMins"] as? NSNumber)?.intValue
+                let name = minutes.map(Self.windowName(minutes:)) ?? key.capitalized
+                let reset = (window["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+                let limitID = bucket["limitId"] as? String ?? "codex"
+                return LimitWindow(id: "\(limitID)-\(key)", title: name,
+                                   usedPercent: min(max(percent, 0), 100), resetsAt: reset)
+            }
+        }
+        guard !windows.isEmpty else { throw ProviderError.noLimits }
+        return LimitSnapshot(windows: windows, updatedAt: Date())
+    }
+
+    private static func send(_ message: [String: Any], to pipe: Pipe) throws {
+        var data = try JSONSerialization.data(withJSONObject: message, options: [.fragmentsAllowed])
+        data.append(0x0A)
+        try pipe.fileHandleForWriting.write(contentsOf: data)
     }
 
     private static func findCodex() -> String? {
@@ -271,6 +279,56 @@ private enum CodexRateLimitReader {
         if minutes == 10_080 { return "7d" }
         if minutes >= 60 && minutes.isMultiple(of: 60) { return "\(minutes / 60)h" }
         return "\(minutes)m"
+    }
+}
+
+private final class RPCResponseReader: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var buffer = Data()
+    private var responses: [Int: [String: Any]] = [:]
+    private var closed = false
+
+    func start(_ handle: FileHandle) {
+        handle.readabilityHandler = { [weak self] readableHandle in
+            let data = readableHandle.availableData
+            self?.receive(data)
+        }
+    }
+
+    func stop(_ handle: FileHandle) {
+        handle.readabilityHandler = nil
+    }
+
+    func wait(for id: Int, timeout: TimeInterval) throws -> [String: Any] {
+        condition.lock()
+        defer { condition.unlock() }
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while responses[id] == nil && !closed {
+            if !condition.wait(until: deadline) {
+                throw ProviderError.rpc("Codex 한도 응답 시간이 초과되었습니다.")
+            }
+        }
+        if let response = responses.removeValue(forKey: id) { return response }
+        throw ProviderError.rpc("Codex app-server 연결이 응답 전에 종료되었습니다.")
+    }
+
+    private func receive(_ data: Data) {
+        condition.lock()
+        defer { condition.unlock() }
+        guard !data.isEmpty else {
+            closed = true
+            condition.broadcast()
+            return
+        }
+        buffer.append(data)
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let line = buffer[..<newline]
+            buffer.removeSubrange(...newline)
+            guard let envelope = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let id = (envelope["id"] as? NSNumber)?.intValue else { continue }
+            responses[id] = envelope
+        }
+        condition.broadcast()
     }
 }
 

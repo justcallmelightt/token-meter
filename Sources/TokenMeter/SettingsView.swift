@@ -10,10 +10,15 @@ struct TokenMeterSettingsView: View {
     @AppStorage(LimitPreference.codex, store: SettingsDefaults.shared) private var showCodexLimits = true
     @AppStorage(LimitPreference.claude, store: SettingsDefaults.shared) private var showClaudeLimits = true
     @AppStorage(LimitPreference.updates, store: SettingsDefaults.shared) private var checkForUpdates = true
+    @AppStorage(AppLanguage.key, store: AppLanguage.defaults) private var selectedLanguage = ""
     @State private var claudeError: String?
     @State private var showRemoveConfirmation = false
 
-    private var isKorean: Bool { AppLanguage.isKorean }
+    private var isKorean: Bool {
+        selectedLanguage.isEmpty
+            ? (Locale.preferredLanguages.first?.hasPrefix("ko") ?? false)
+            : selectedLanguage == "ko"
+    }
     private var updateStatusLabel: String {
         guard limits.lastUpdateCheck != nil else {
             return isKorean ? "최신 공개 버전 확인" : "Check the latest published version"
@@ -46,6 +51,10 @@ struct TokenMeterSettingsView: View {
 
             Section(isKorean ? "Codex 한도" : "Codex limits") {
                 Toggle(isKorean ? "메뉴 막대 창에 표시" : "Show in menu bar panel", isOn: $showCodexLimits)
+                Text(isKorean
+                     ? "연결 방법: 터미널에서 codex login status로 로그인 상태를 확인하세요. 로그아웃 상태라면 codex login을 실행한 뒤 아래 새로고침을 누르세요."
+                     : "Connect: In Terminal, check your sign-in with codex login status. If signed out, run codex login, then select Refresh below.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(limits.codex == nil ? (isKorean ? "Codex 연결 상태 확인" : "Codex connection status") : (isKorean ? "Codex 계정 한도 연결됨" : "Connected to Codex account limits"))
@@ -69,6 +78,10 @@ struct TokenMeterSettingsView: View {
 
             Section(isKorean ? "Claude Code 한도" : "Claude Code limits") {
                 Toggle(isKorean ? "메뉴 막대 창에 표시" : "Show in menu bar panel", isOn: $showClaudeLimits)
+                Text(isKorean
+                     ? "연결 방법: Claude Code 연결을 누른 뒤 Claude Code 세션에서 첫 응답을 받으세요. 기존 상태줄 명령은 보존되며, 지원되는 구독의 한도는 응답 후 표시됩니다."
+                     : "Connect: Select Connect Claude Code, then get a first response in a Claude Code session. Your existing status line command is preserved; supported subscription limits appear after a response.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(limits.claudeBridgeInstalled
