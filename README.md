@@ -6,6 +6,8 @@
 
 macOS 메뉴 막대에서 **로컬 Codex 세션 기록의 토큰 사용량**을 보여주는 SwiftUI 개발 초기 앱입니다.
 
+현재 브랜치와 릴리즈 태그에는 배포 문서만 보관합니다. 새 앱 소스코드는 공개하지 않습니다.
+
 ## 설치
 
 1. [GitHub Releases](https://github.com/justcallmelightt/token-meter/releases)에서 `TokenMeter-*-macOS-universal.zip`을 내려받아 압축을 풉니다.
@@ -20,6 +22,8 @@ macOS 메뉴 막대에서 **로컬 Codex 세션 기록의 토큰 사용량**을 
 메뉴 막대 창을 열면 마지막으로 화면에 표시했던 수치와 최신 수치를 비교합니다. 달라진 자릿수는 이전 값에서 최신 값으로 굴러가며, 앱을 종료했다가 다시 실행해도 마지막으로 본 수치를 기억합니다. 창이 열린 동안 새 기록이 들어와도 같은 방식으로 갱신합니다. 모션 줄이기 설정에서는 짧은 페이드로 표시합니다. 마지막으로 본 숫자와 스캔 캐시는 로컬 앱 설정에 저장하며 세션 기록 파일은 수정하지 않습니다.
 
 이 수치는 이 Mac에 저장된 Codex 세션 기록에 한정됩니다. ChatGPT 전체 계정 사용량, 다른 기기의 사용량, API 청구 금액이나 계정 사용 한도를 뜻하지 않습니다. 기록이 삭제되거나 저장 형식이 바뀌면 표시값도 달라질 수 있습니다.
+
+메뉴 막대 창의 **API 요금 기준 추정**은 오늘의 일반 입력·캐시 입력·출력 토큰에 설정된 100만 토큰당 단가를 적용한 가정값입니다. 기본 단가는 GPT-5.1-Codex의 공개 API 요금을 참고하며 설정에서 변경할 수 있습니다. 사용한 모델을 자동 판별하지 않으므로 실제 API 청구액이나 Codex 구독 비용이 아닙니다.
 
 ## 계정 한도와 설정
 
@@ -62,9 +66,13 @@ The app reads records from each Mac's `~/.codex/sessions/`. It shows no token co
 
 The app reads `token_count` events from `~/.codex/sessions/**/*.jsonl` and sums input and output tokens by event time. Cached input is already part of input totals and is not added again. The first scan reads recent records from each session; later scans read only appended data. Scan results are cached in local app preferences, refreshed every 30 seconds, and can be refreshed manually.
 
+The current branch and release tags contain distribution documentation only. New app source code is not published.
+
 When the menu bar panel opens, Token Meter compares the last displayed value with the latest value and rolls changed digits to the new count. This also works after quitting and reopening the app, and while the panel remains open. Reduce Motion switches the rolling animation to a short fade. The app stores the last viewed count and scan cache locally and does not modify Codex session files.
 
 These numbers only reflect Codex session records stored on this Mac. They do not represent total ChatGPT account usage, usage on other devices, API charges, or account limits. Values can change if records are deleted or their format changes.
+
+The panel's **API price estimate** applies the configured per-million-token rates to today's ordinary input, cached input, and output tokens. Its default rates reference published GPT-5.1-Codex API prices and can be changed in Settings. The app does not identify the model used for each session, so this hypothetical value is neither an API bill nor a Codex subscription charge.
 
 ## Account limits and settings
 
